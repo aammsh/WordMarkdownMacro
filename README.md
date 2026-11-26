@@ -13,7 +13,10 @@
 
 يُثبَّت الماكرو في القالب العام لبرنامج Word (قالب Normal)، فيصبح متاحًا في كل المستندات.
 
-1. نزّل الملف `MarkdownToWord.bas` من هذا المستودع.
+1. نزّل الملف `MarkdownToWord.bas` بإحدى طريقتين:
+   - **الملف وحده:** من [الرابط المباشر](https://github.com/aammsh/WordMarkdownMacro/raw/main/MarkdownToWord.bas)،
+     أو افتح الملف في المستودع واضغط زر التنزيل (السهم للأسفل) بجانب الزر Raw.
+   - **المشروع كاملًا:** في صفحة المستودع اضغط الزر الأخضر **Code** ← الأمر **Download ZIP**، ثم فُكّ ضغط الملف.
 2. افتح برنامج Word، ثم افتح محرر Visual Basic:
    - **نظام Windows:** اضغط الاختصار `Alt + F11`، أو من تبويب **المطور (Developer)** اختر زر **Visual Basic**.
    - **نظام macOS:** من قائمة **أدوات (Tools)** ← **ماكرو (Macro)** ← **محرر Visual Basic (Visual Basic Editor)**.
