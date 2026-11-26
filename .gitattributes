@@ -1,0 +1,5 @@
+# Keep line endings stable between macOS and Windows.
+* text=auto eol=lf
+
+# The VBA editor expects CRLF in module files.
+*.bas text eol=crlf

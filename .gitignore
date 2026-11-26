@@ -1,0 +1,13 @@
+.env
+node_modules/
+__pycache__/
+*.pyc
+*.log
+.DS_Store
+Thumbs.db
+dist/
+build/
+.build/
+*.bak
+~$*.doc*
+*.docm
