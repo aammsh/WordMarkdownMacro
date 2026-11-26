@@ -1,5 +1,6 @@
 # Keep line endings stable between macOS and Windows.
 * text=auto eol=lf
 
-# The VBA editor expects CRLF in module files.
-*.bas text eol=crlf
+# The VBA editor's "Import File" needs CRLF line endings. Store the module
+# byte-for-byte so a download from GitHub keeps CRLF too.
+*.bas -text

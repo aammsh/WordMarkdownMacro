@@ -1,3 +1,4 @@
+Attribute VB_Name = "MdToWordModule"
 '==========================================================
 '  MarkdownToWord  -  turns pasted Markdown into real Word formatting
 '  Version 2.3
