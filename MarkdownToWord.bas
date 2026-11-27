@@ -1,7 +1,7 @@
 Attribute VB_Name = "MdToWordModule"
 '==========================================================
 '  MarkdownToWord  -  turns pasted Markdown into real Word formatting
-'  Version 2.4
+'  Version 2.5
 '
 '  Usage: paste Markdown text into a Word document, then run the
 '         macro MarkdownToWord. It works on the whole active document.
@@ -51,6 +51,17 @@ Private Const CONVERT_LINE_BREAKS As Boolean = True
 
 ' Treat "two spaces at end of line" as a line break, per the Markdown spec
 Private Const HONOR_TWO_SPACE_BREAK As Boolean = False
+
+' Footnote numbers in parentheses (1), both in the body and at the foot
+' of the page, as is customary in Arabic research. False = plain 1.
+' When FOOTNOTE_PARENS_ASK is True the macro asks at run time (only if
+' the text has footnotes), and FOOTNOTE_PARENS is the default answer.
+Private Const FOOTNOTE_PARENS_ASK As Boolean = True
+Private Const FOOTNOTE_PARENS As Boolean = True
+
+' At the foot of the page, show the footnote number at text level in the
+' Footnote Text style instead of raised. False = Word's default (raised).
+Private Const FOOTNOTE_NUMBER_AS_TEXT As Boolean = True
 '-------------------------------------------------------------
 
 ' Private-use characters that temporarily shield text from conversion
@@ -58,6 +69,9 @@ Private PH_STAR As String, PH_TICK As String, PH_HASH As String
 Private PH_PIPE As String, PH_TILDE As String, PH_BRACK As String
 Private PH_GT As String, PH_DASH As String, PH_DOT As String
 Private PH_UNDER As String, PH_PERIOD As String
+
+' The parentheses choice for this run (setting or the user's answer)
+Private m_parens As Boolean
 
 
 '==========================================================
@@ -921,6 +935,16 @@ Private Sub ConvertFootnotes(doc As Document)
     If n = 0 Then Exit Sub
     ReDim used(1 To n)
 
+    m_parens = FOOTNOTE_PARENS
+    If FOOTNOTE_PARENS_ASK Then
+        Application.ScreenUpdating = True
+        ' Arabic: "Do you want the footnote numbers in parentheses?"
+        m_parens = (MsgBox(U("647 644 20 62A 631 64A 62F 20 648 636 639 20 623 631 642 627 645 20 627 644 62D 648 627 634 64A 20 628 64A 646 20 642 648 633 64A 646 61F"), _
+                    vbYesNo + vbQuestion + IIf(FOOTNOTE_PARENS, vbDefaultButton1, vbDefaultButton2), _
+                    "Markdown to Word") = vbYes)
+        Application.ScreenUpdating = False
+    End If
+
     ' Pass 2: turn every reference into a footnote
     For k = 1 To n
         searchFrom = 0
@@ -968,6 +992,7 @@ Private Sub ConvertFootnotes(doc As Document)
                 If RTL_DOC Then fn.Range.ParagraphFormat.ReadingOrder = wdReadingOrderRtl
                 Err.Clear
                 On Error GoTo 0
+                StyleFootnoteMarks doc, fn
                 used(k) = True
                 searchFrom = fn.Reference.End
             End If
@@ -979,6 +1004,52 @@ Private Sub ConvertFootnotes(doc As Document)
     For k = n To 1 Step -1
         If used(k) Then defParas(k).Delete
     Next k
+End Sub
+
+' Parentheses around the number in the body and at the foot of the page,
+' and the number at text level at the foot, per the settings at the top.
+' The parentheses are plain text beside Word's automatic number, so Word
+' still renumbers the footnotes itself.
+Private Sub StyleFootnoteMarks(doc As Document, fn As Footnote)
+    Dim rb As Range, fp As Range, rm As Range, nx As Range
+    Dim pos As Long
+
+    On Error Resume Next
+
+    ' In the body: (1) raised
+    If m_parens Then
+        Set rb = doc.Range(fn.Reference.Start, fn.Reference.End)
+        rb.InsertBefore "("
+        rb.InsertAfter ")"
+        rb.Style = doc.Styles(wdStyleFootnoteReference)
+    End If
+
+    ' At the foot of the page. Word stores the automatic number as Chr(2).
+    Set fp = fn.Range.Paragraphs(1).Range
+    pos = InStr(fp.Text, Chr(2))
+    If pos = 0 Then Exit Sub
+    Set rm = fp.Duplicate
+    rm.SetRange fp.Start + pos - 1, fp.Start + pos
+
+    If m_parens Then
+        rm.InsertBefore "("
+        rm.InsertAfter ")"
+    End If
+
+    If FOOTNOTE_NUMBER_AS_TEXT Then
+        rm.Style = doc.Styles(wdStyleDefaultParagraphFont)
+        rm.Font.Reset
+        rm.Font.Superscript = False
+    Else
+        rm.Style = doc.Styles(wdStyleFootnoteReference)
+    End If
+
+    ' One space between the number and the footnote text
+    Set nx = fp.Duplicate
+    nx.SetRange rm.End, rm.End + 1
+    If nx.Text <> " " And nx.Text <> vbTab Then rm.InsertAfter " "
+
+    Err.Clear
 End Sub
 
 Private Function LabelKnown(labels() As String, ByVal n As Long, ByVal lbl As String) As Boolean
