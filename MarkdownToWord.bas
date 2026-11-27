@@ -1,7 +1,7 @@
 Attribute VB_Name = "MdToWordModule"
 '==========================================================
 '  MarkdownToWord  -  turns pasted Markdown into real Word formatting
-'  Version 2.3
+'  Version 2.4
 '
 '  Usage: paste Markdown text into a Word document, then run the
 '         macro MarkdownToWord. It works on the whole active document.
@@ -9,7 +9,8 @@ Attribute VB_Name = "MdToWordModule"
 '  Supports: headings 1-6, bold, italic, bold+italic, strikethrough,
 '            inline code, ``` code blocks, bulleted and numbered lists
 '            with nesting, task lists, block quotes, horizontal rules,
-'            links, and tables (with column alignment).
+'            links, tables (with column alignment), and footnotes
+'            [^1] which become real Word footnotes.
 '
 '  NOTE ON ENCODING - this file is deliberately pure ASCII.
 '  The VBA editor stores module text in a single-byte code page that
@@ -93,8 +94,9 @@ Public Sub MarkdownToWord()
     ConvertLists doc           ' 7.  lists
     ConvertInline doc          ' 8.  bold / italic / strike / code
     ConvertLinks doc           ' 9.  links
-    RestoreProtected doc       ' 10. put the shielded characters back
-    TidyUp doc                 ' 11. final cleanup
+    ConvertFootnotes doc       ' 10. footnotes [^1]
+    RestoreProtected doc       ' 11. put the shielded characters back
+    TidyUp doc                 ' 12. final cleanup
 
     Application.ScreenUpdating = True
     On Error Resume Next
@@ -215,16 +217,22 @@ Private Sub ApplyCodeBlock(doc As Document, ByVal fenceTop As Long, ByVal fenceB
 End Sub
 
 Private Sub RestoreProtected(doc As Document)
-    RepPlain doc, PH_STAR, "*"
-    RepPlain doc, PH_TICK, "`"
-    RepPlain doc, PH_HASH, "#"
-    RepPlain doc, PH_PIPE, "|"
-    RepPlain doc, PH_TILDE, "~"
-    RepPlain doc, PH_BRACK, "["
-    RepPlain doc, PH_GT, ">"
-    RepPlain doc, PH_DASH, "-"
-    RepPlain doc, PH_DOT, "."
-    RepPlain doc, PH_UNDER, "_"
+    RestoreStory doc, wdMainTextStory
+    ' Footnote text was copied from the body while still shielded
+    If doc.Footnotes.Count > 0 Then RestoreStory doc, wdFootnotesStory
+End Sub
+
+Private Sub RestoreStory(doc As Document, ByVal story As WdStoryType)
+    RepPlainIn doc.StoryRanges(story), PH_STAR, "*"
+    RepPlainIn doc.StoryRanges(story), PH_TICK, "`"
+    RepPlainIn doc.StoryRanges(story), PH_HASH, "#"
+    RepPlainIn doc.StoryRanges(story), PH_PIPE, "|"
+    RepPlainIn doc.StoryRanges(story), PH_TILDE, "~"
+    RepPlainIn doc.StoryRanges(story), PH_BRACK, "["
+    RepPlainIn doc.StoryRanges(story), PH_GT, ">"
+    RepPlainIn doc.StoryRanges(story), PH_DASH, "-"
+    RepPlainIn doc.StoryRanges(story), PH_DOT, "."
+    RepPlainIn doc.StoryRanges(story), PH_UNDER, "_"
 End Sub
 
 
@@ -866,7 +874,126 @@ End Sub
 
 
 '==========================================================
-'  11. Final cleanup
+'  10. Footnotes
+'==========================================================
+' A definition is a paragraph of its own:   [^label]: footnote text
+' A reference is [^label] anywhere else. Each reference becomes a real
+' Word footnote holding a copy of the definition text (with its bold,
+' italic and links), and the definition paragraph is then removed.
+' Word numbers the footnotes itself, in the order they appear.
+Private Sub ConvertFootnotes(doc As Document)
+    Dim i As Long, j As Long, k As Long, n As Long
+    Dim t As String, lbl As String, closeAt As Long, bodyAt As Long
+    Dim p As Paragraph, r As Range, fn As Footnote
+    Dim labels() As String, defParas() As Range, defBodies() As Range
+    Dim used() As Boolean, skip As Boolean
+    Dim searchFrom As Long, guard As Long
+
+    ' Pass 1: collect the definitions
+    n = 0
+    For i = 1 To doc.Paragraphs.Count
+        Set p = doc.Paragraphs(i)
+        t = LineText(p)
+        If Left$(t, 2) = "[^" Then
+            closeAt = InStr(3, t, "]")
+            If closeAt > 3 Then
+                If Mid$(t, closeAt + 1, 1) = ":" Then
+                    lbl = Mid$(t, 3, closeAt - 3)
+                    If InStr(lbl, " ") = 0 And Not LabelKnown(labels, n, lbl) Then
+                        If Not p.Range.Information(wdWithInTable) Then
+                            bodyAt = closeAt + 2
+                            Do While Mid$(t, bodyAt, 1) = " " Or Mid$(t, bodyAt, 1) = vbTab
+                                bodyAt = bodyAt + 1
+                            Loop
+                            n = n + 1
+                            ReDim Preserve labels(1 To n)
+                            ReDim Preserve defParas(1 To n)
+                            ReDim Preserve defBodies(1 To n)
+                            labels(n) = lbl
+                            Set defParas(n) = p.Range
+                            Set defBodies(n) = doc.Range(p.Range.Start + bodyAt - 1, p.Range.End - 1)
+                        End If
+                    End If
+                End If
+            End If
+        End If
+    Next i
+    If n = 0 Then Exit Sub
+    ReDim used(1 To n)
+
+    ' Pass 2: turn every reference into a footnote
+    For k = 1 To n
+        searchFrom = 0
+        guard = 0
+        Do
+            guard = guard + 1
+            If guard > 1000 Then Exit Do
+            If searchFrom >= doc.Content.End Then Exit Do
+
+            Set r = doc.Range(searchFrom, doc.Content.End)
+            With r.Find
+                .ClearFormatting
+                .Replacement.ClearFormatting
+                ' "^" is Word's escape character, so it is doubled
+                .Text = "[^^" & Replace(labels(k), "^", "^^") & "]"
+                .Replacement.Text = ""
+                .Forward = True
+                .Wrap = wdFindStop
+                .Format = False
+                .MatchWildcards = False
+                .MatchCase = False
+                .MatchWholeWord = False
+                If Not .Execute Then Exit Do
+            End With
+
+            ' Word cannot nest footnotes, so references inside a definition
+            ' stay as text; so does [^1] written as inline code.
+            skip = (r.Font.Name = CODE_FONT)
+            For j = 1 To n
+                If r.Start >= defParas(j).Start And r.Start < defParas(j).End Then skip = True
+            Next j
+
+            If skip Then
+                searchFrom = r.End
+            Else
+                r.Text = ""
+                Set fn = doc.Footnotes.Add(Range:=r)
+                If defBodies(k).End > defBodies(k).Start Then
+                    fn.Range.FormattedText = defBodies(k).FormattedText
+                End If
+                On Error Resume Next
+                ' Keep the size of the Footnote Text style, not of the body
+                fn.Range.Font.Size = doc.Styles(wdStyleFootnoteText).Font.Size
+                fn.Range.Font.SizeBi = doc.Styles(wdStyleFootnoteText).Font.SizeBi
+                If RTL_DOC Then fn.Range.ParagraphFormat.ReadingOrder = wdReadingOrderRtl
+                Err.Clear
+                On Error GoTo 0
+                used(k) = True
+                searchFrom = fn.Reference.End
+            End If
+        Loop
+    Next k
+
+    ' Pass 3: remove the definitions that were used. An unused one stays
+    ' visible so its text is never lost silently.
+    For k = n To 1 Step -1
+        If used(k) Then defParas(k).Delete
+    Next k
+End Sub
+
+Private Function LabelKnown(labels() As String, ByVal n As Long, ByVal lbl As String) As Boolean
+    Dim k As Long
+    For k = 1 To n
+        If LCase$(labels(k)) = LCase$(lbl) Then
+            LabelKnown = True
+            Exit Function
+        End If
+    Next k
+End Function
+
+
+'==========================================================
+'  12. Final cleanup
 '==========================================================
 Private Sub TidyUp(doc As Document)
     Dim i As Long
@@ -982,8 +1109,11 @@ End Sub
 
 ' Plain find and replace over the whole document
 Private Sub RepPlain(doc As Document, ByVal findText As String, ByVal repText As String)
-    Dim r As Range
-    Set r = doc.Content
+    RepPlainIn doc.Content, findText, repText
+End Sub
+
+' Plain find and replace inside one range (e.g. the footnotes story)
+Private Sub RepPlainIn(ByVal r As Range, ByVal findText As String, ByVal repText As String)
     With r.Find
         .ClearFormatting
         .Replacement.ClearFormatting
